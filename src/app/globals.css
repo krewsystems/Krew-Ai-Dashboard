@@ -6,6 +6,14 @@
 
 :root {
   color-scheme: dark;
+  --chart-bar: #ffffff;
+  --chart-line: #ffffff;
+  --chart-grid: #1a1a1a;
+  --chart-cursor: #1a1a1a;
+  --chart-tooltip-bg: #111111;
+  --chart-tooltip-border: #1f1f1f;
+  --chart-tooltip-label: #6b7280;
+  --chart-tooltip-value: #ffffff;
 }
 
 html.dark {
@@ -28,6 +36,17 @@ body {
   font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+html.light {
+  --chart-bar: #09090b;
+  --chart-line: #09090b;
+  --chart-grid: #e4e4e7;
+  --chart-cursor: #f4f4f5;
+  --chart-tooltip-bg: #ffffff;
+  --chart-tooltip-border: #e4e4e7;
+  --chart-tooltip-label: #71717a;
+  --chart-tooltip-value: #09090b;
 }
 
 html.light body {

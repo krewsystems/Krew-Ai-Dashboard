@@ -3,11 +3,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import type { UsageLog, UsageLogWithBrand, TypeBreakdown, DailyData } from '@/lib/types'
+import type { UsageLog, UsageLogWithBrand, TypeBreakdown } from '@/lib/types'
 import { fmtCost } from '@/lib/fmt'
 import StatCard from '@/components/StatCard'
 import SkeletonCard from '@/components/SkeletonCard'
 import MessageTypeDonut from '@/components/MessageTypeDonut'
+import TimeframeSelector, { getPreset, type TimeframeValue } from '@/components/TimeframeSelector'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts'
@@ -18,6 +19,8 @@ const TYPE_STYLES: Record<string, string> = {
   image: 'bg-[#0e1f35] text-[#60a5fa]',
   story: 'bg-[#1f1200] text-[#f59e0b]',
 }
+
+function isoDay(d: Date) { return d.toISOString().split('T')[0] }
 
 function BackIcon() {
   return (
@@ -30,9 +33,9 @@ function BackIcon() {
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null
   return (
-    <div className="bg-[#111111] border border-[#1f1f1f] rounded-lg px-3 py-2 text-xs shadow-xl">
-      <p className="text-[#6b7280] mb-1">{label}</p>
-      <p className="text-white font-semibold">${fmtCost(Number(payload[0].value))}</p>
+    <div style={{ background: 'var(--chart-tooltip-bg)', borderColor: 'var(--chart-tooltip-border)' }} className="border rounded-lg px-3 py-2 text-xs shadow-xl">
+      <p style={{ color: 'var(--chart-tooltip-label)' }} className="mb-1">{label}</p>
+      <p style={{ color: 'var(--chart-tooltip-value)' }} className="font-semibold">${fmtCost(Number(payload[0].value))}</p>
     </div>
   )
 }
@@ -42,25 +45,29 @@ export default function BrandDetailPage() {
   const router = useRouter()
   const brandId = params.id as string
 
+  const [timeframe, setTimeframe] = useState<TimeframeValue>(getPreset('all_time'))
   const [brandName, setBrandName] = useState('')
   const [logs, setLogs] = useState<UsageLogWithBrand[]>([])
   const [typeBreakdown, setTypeBreakdown] = useState<TypeBreakdown[]>([])
-  const [dailyData, setDailyData] = useState<DailyData[]>([])
+  const [chartData, setChartData] = useState<{ label: string; cost: number }[]>([])
+  const [chartTitle, setChartTitle] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<string>('all')
   const [page, setPage] = useState(0)
   const PAGE_SIZE = 50
 
-  const fetchBrand = useCallback(async () => {
+  const fetchBrand = useCallback(async (tf: TimeframeValue) => {
+    setLoading(true)
     try {
-      // Fetch brand and logs separately — no FK join needed
       const [brandRes, logsRes] = await Promise.all([
         supabase.from('brands').select('id, name').eq('id', brandId).single(),
         supabase
           .from('luna_usage_logs')
           .select('*')
           .eq('brand_id', brandId)
+          .gte('created_at', tf.from)
+          .lte('created_at', tf.to)
           .order('created_at', { ascending: false }),
       ])
 
@@ -84,18 +91,52 @@ export default function BrandDetailPage() {
       })
       setTypeBreakdown(Object.entries(typeMap).map(([type, d]) => ({ type, ...d })))
 
-      // 30-day cost chart
-      const dayMap: Record<string, number> = {}
-      for (let i = 0; i < 30; i++) {
-        const d = new Date()
-        d.setUTCDate(d.getUTCDate() - (29 - i))
-        dayMap[d.toISOString().split('T')[0]] = 0
+      // Build chart data
+      const isSingleDay = tf.key === 'today' || tf.key === 'yesterday' || tf.key === 'custom'
+
+      if (isSingleDay) {
+        // Hourly chart for single-day views
+        const hourMap: Record<number, number> = {}
+        for (let h = 0; h < 24; h++) hourMap[h] = 0
+        allLogs.forEach(l => {
+          const h = new Date(l.created_at).getUTCHours()
+          hourMap[h] += l.cost_usd ?? 0
+        })
+        setChartData(
+          Object.entries(hourMap).map(([h, cost]) => ({
+            label: `${String(h).padStart(2, '0')}:00`,
+            cost,
+          }))
+        )
+        setChartTitle(`hourly cost — ${tf.label.toLowerCase()}`)
+      } else {
+        // Daily chart
+        const dayMap: Record<string, number> = {}
+        if (tf.key === 'all_time') {
+          for (let i = 0; i < 30; i++) {
+            const d = new Date()
+            d.setUTCDate(d.getUTCDate() - (29 - i))
+            dayMap[isoDay(d)] = 0
+          }
+        } else {
+          const start = new Date(tf.from)
+          const end = new Date(tf.to)
+          for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+            dayMap[isoDay(d)] = 0
+          }
+        }
+        allLogs.forEach(l => {
+          const key = l.created_at.split('T')[0]
+          if (key in dayMap) dayMap[key] += l.cost_usd ?? 0
+        })
+        setChartData(
+          Object.entries(dayMap).map(([date, cost]) => ({
+            label: new Date(date + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+            cost,
+          }))
+        )
+        setChartTitle(tf.key === 'all_time' ? 'daily cost — last 30 days' : `daily cost — ${tf.label.toLowerCase()}`)
       }
-      allLogs.forEach(l => {
-        const key = l.created_at.split('T')[0]
-        if (key in dayMap) dayMap[key] += l.cost_usd ?? 0
-      })
-      setDailyData(Object.entries(dayMap).map(([date, cost]) => ({ date, cost })))
     } catch (err: unknown) {
       console.error('[BrandDetail]', err)
       setError(err instanceof Error ? err.message : String(err))
@@ -104,25 +145,18 @@ export default function BrandDetailPage() {
     }
   }, [brandId])
 
-  useEffect(() => { fetchBrand() }, [fetchBrand])
+  useEffect(() => { fetchBrand(timeframe) }, [fetchBrand, timeframe])
+  useEffect(() => { setPage(0) }, [filter, timeframe])
 
-  const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString()
-  const todayStart = new Date().toISOString().split('T')[0] + 'T00:00:00.000Z'
-
-  const totalCostAllTime = logs.reduce((s, l) => s + (l.cost_usd ?? 0), 0)
-  const totalCostMonth = logs.filter(l => l.created_at >= monthStart).reduce((s, l) => s + (l.cost_usd ?? 0), 0)
-  const totalRepliesAllTime = logs.length
-  const totalRepliesMonth = logs.filter(l => l.created_at >= monthStart).length
-  const totalRepliesToday = logs.filter(l => l.created_at >= todayStart).length
-  const totalCostToday = logs.filter(l => l.created_at >= todayStart).reduce((s, l) => s + (l.cost_usd ?? 0), 0)
+  const totalCost = logs.reduce((s, l) => s + (l.cost_usd ?? 0), 0)
+  const totalReplies = logs.length
+  const avgCostPerReply = totalReplies > 0 ? totalCost / totalReplies : 0
 
   const filteredLogs = (filter === 'all' ? logs : logs.filter(l => l.message_type === filter))
   const pagedLogs = filteredLogs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  const totalPages = Math.max(1, Math.ceil(filteredLogs.length / PAGE_SIZE))
 
-  const chartFormatted = dailyData.map(d => ({
-    day: new Date(d.date + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-    cost: d.cost,
-  }))
+  const periodLabel = timeframe.label.toLowerCase()
 
   if (error) {
     return (
@@ -141,33 +175,33 @@ export default function BrandDetailPage() {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div>
-        <button
-          onClick={() => router.back()}
-          className="flex items-center gap-1.5 text-[#6b7280] hover:text-white transition-colors text-xs mb-3"
-        >
-          <BackIcon />
-          back to brands
-        </button>
-        <h1 className="text-white text-lg font-semibold tracking-tight">
-          {loading
-            ? <span className="inline-block h-5 w-48 bg-[#1f1f1f] rounded animate-pulse" />
-            : brandName}
-        </h1>
+      <div className="flex items-center justify-between">
+        <div>
+          <button
+            onClick={() => router.back()}
+            className="flex items-center gap-1.5 text-[#6b7280] hover:text-white transition-colors text-xs mb-3"
+          >
+            <BackIcon />
+            back to brands
+          </button>
+          <h1 className="text-white text-lg font-semibold tracking-tight">
+            {loading
+              ? <span className="inline-block h-5 w-48 bg-[#1f1f1f] rounded animate-pulse" />
+              : brandName}
+          </h1>
+        </div>
+        <TimeframeSelector value={timeframe} onChange={setTimeframe} />
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {loading ? (
-          Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)
+          Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
-            <StatCard label="cost today" value={`$${fmtCost(totalCostToday)}`} />
-            <StatCard label="cost this month" value={`$${fmtCost(totalCostMonth)}`} />
-            <StatCard label="cost all time" value={`$${fmtCost(totalCostAllTime)}`} />
-            <StatCard label="replies today" value={totalRepliesToday.toLocaleString()} />
-            <StatCard label="replies this month" value={totalRepliesMonth.toLocaleString()} />
-            <StatCard label="replies all time" value={totalRepliesAllTime.toLocaleString()} />
+            <StatCard label={`cost — ${periodLabel}`} value={`$${fmtCost(totalCost)}`} />
+            <StatCard label={`replies — ${periodLabel}`} value={totalReplies.toLocaleString()} />
+            <StatCard label={`avg cost / reply`} value={`$${fmtCost(avgCostPerReply)}`} />
           </>
         )}
       </div>
@@ -175,41 +209,44 @@ export default function BrandDetailPage() {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="bg-[#111111] border border-[#1f1f1f] rounded-xl p-5">
-          <p className="text-[10px] uppercase tracking-widest text-[#6b7280] font-medium mb-4">cost over time — last 30 days</p>
+          <p className="text-[10px] uppercase tracking-widest text-[#6b7280] font-medium mb-4">
+            {chartTitle}
+          </p>
           {loading ? (
             <div className="h-48 bg-[#1a1a1a] rounded animate-pulse" />
           ) : (
             <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={chartFormatted} margin={{ top: 4, right: 4, left: -16, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1a1a1a" vertical={false} />
+              <LineChart data={chartData} margin={{ top: 4, right: 12, left: 4, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
                 <XAxis
-                  dataKey="day"
+                  dataKey="label"
                   tick={{ fill: '#6b7280', fontSize: 9, fontFamily: 'Inter, sans-serif' }}
                   axisLine={false}
                   tickLine={false}
-                  interval={6}
+                  interval={Math.max(0, Math.floor(chartData.length / 6) - 1)}
                 />
                 <YAxis
                   tick={{ fill: '#6b7280', fontSize: 9, fontFamily: 'Inter, sans-serif' }}
                   axisLine={false}
                   tickLine={false}
                   tickFormatter={(v: number) => `$${fmtCost(v)}`}
+                  width={50}
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Line
                   type="monotone"
                   dataKey="cost"
-                  stroke="#ffffff"
+                  stroke="var(--chart-line)"
                   strokeWidth={1.5}
                   dot={false}
-                  activeDot={{ r: 3, fill: '#fff' }}
+                  activeDot={{ r: 3, fill: 'var(--chart-line)' }}
                 />
               </LineChart>
             </ResponsiveContainer>
           )}
         </div>
 
-        {!loading && <MessageTypeDonut data={typeBreakdown} />}
+        {!loading && <MessageTypeDonut data={typeBreakdown} label={`message types — ${periodLabel}`} />}
       </div>
 
       {/* Log table */}
@@ -253,7 +290,7 @@ export default function BrandDetailPage() {
             </div>
           ))
         ) : pagedLogs.length === 0 ? (
-          <div className="py-10 text-center text-[#4b5563] text-sm">no data</div>
+          <div className="py-10 text-center text-[#4b5563] text-sm">no data for this period</div>
         ) : (
           pagedLogs.map(log => (
             <div key={log.id} className="flex items-center gap-3 px-5 py-2.5 border-b border-[#1a1a1a] last:border-b-0 hover:bg-[#0d0d0d] transition-colors">
@@ -270,7 +307,7 @@ export default function BrandDetailPage() {
           ))
         )}
 
-        {!loading && filteredLogs.length > PAGE_SIZE && (
+        {!loading && totalPages > 1 && (
           <div className="px-5 py-3 border-t border-[#1a1a1a] flex items-center justify-between">
             <span className="text-[11px] text-[#6b7280]">
               {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filteredLogs.length)} of {filteredLogs.length}
@@ -280,7 +317,7 @@ export default function BrandDetailPage() {
                 className="px-3 py-1.5 rounded-lg bg-[#1a1a1a] text-[11px] text-[#9ca3af] hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
                 prev
               </button>
-              <button onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= filteredLogs.length}
+              <button onClick={() => setPage(p => p + 1)} disabled={page >= totalPages - 1}
                 className="px-3 py-1.5 rounded-lg bg-[#1a1a1a] text-[11px] text-[#9ca3af] hover:text-white disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
                 next
               </button>
