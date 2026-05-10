@@ -3,11 +3,14 @@ interface StatCardProps {
   value: string
   subtext?: string
   highlight?: boolean
+  onClick?: () => void
 }
 
-export default function StatCard({ label, value, subtext, highlight }: StatCardProps) {
+export default function StatCard({ label, value, subtext, highlight, onClick }: StatCardProps) {
   return (
-    <div className={`rounded-xl p-5 border transition-colors ${
+    <div
+      onClick={onClick}
+      className={`rounded-xl p-5 border transition-colors ${onClick ? 'cursor-pointer hover:border-[#333]' : ''} ${
       highlight
         ? 'bg-white dark:bg-white border-white'
         : 'bg-[#111111] dark:bg-[#111111] border-[#1f1f1f] dark:border-[#1f1f1f]'

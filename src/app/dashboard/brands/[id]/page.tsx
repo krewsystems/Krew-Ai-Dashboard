@@ -9,6 +9,7 @@ import StatCard from '@/components/StatCard'
 import SkeletonCard from '@/components/SkeletonCard'
 import MessageTypeDonut from '@/components/MessageTypeDonut'
 import TimeframeSelector, { getPreset, type TimeframeValue } from '@/components/TimeframeSelector'
+import TokensModal from '@/components/TokensModal'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts'
@@ -53,6 +54,7 @@ export default function BrandDetailPage() {
   const [chartTitle, setChartTitle] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [showTokensModal, setShowTokensModal] = useState(false)
   const [filter, setFilter] = useState<string>('all')
   const [page, setPage] = useState(0)
   const PAGE_SIZE = 50
@@ -82,12 +84,13 @@ export default function BrandDetailPage() {
       setLogs(withBrand)
 
       // Type breakdown
-      const typeMap: Record<string, { count: number; cost: number }> = {}
+      const typeMap: Record<string, { count: number; cost: number; tokens: number }> = {}
       allLogs.forEach(l => {
         const t = l.message_type ?? 'text'
-        if (!typeMap[t]) typeMap[t] = { count: 0, cost: 0 }
+        if (!typeMap[t]) typeMap[t] = { count: 0, cost: 0, tokens: 0 }
         typeMap[t].count++
         typeMap[t].cost += l.cost_usd ?? 0
+        typeMap[t].tokens += l.total_tokens ?? 0
       })
       setTypeBreakdown(Object.entries(typeMap).map(([type, d]) => ({ type, ...d })))
 
@@ -150,6 +153,7 @@ export default function BrandDetailPage() {
 
   const totalCost = logs.reduce((s, l) => s + (l.cost_usd ?? 0), 0)
   const totalReplies = logs.length
+  const totalTokens = logs.reduce((s, l) => s + (l.total_tokens ?? 0), 0)
   const avgCostPerReply = totalReplies > 0 ? totalCost / totalReplies : 0
 
   const filteredLogs = (filter === 'all' ? logs : logs.filter(l => l.message_type === filter))
@@ -194,13 +198,14 @@ export default function BrandDetailPage() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {loading ? (
-          Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} />)
+          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
             <StatCard label={`cost — ${periodLabel}`} value={`$${fmtCost(totalCost)}`} />
             <StatCard label={`replies — ${periodLabel}`} value={totalReplies.toLocaleString()} />
+            <StatCard label={`tokens — ${periodLabel}`} value={totalTokens.toLocaleString()} onClick={() => setShowTokensModal(true)} />
             <StatCard label={`avg cost / reply`} value={`$${fmtCost(avgCostPerReply)}`} />
           </>
         )}
@@ -325,6 +330,15 @@ export default function BrandDetailPage() {
           </div>
         )}
       </div>
+
+      {showTokensModal && (
+        <TokensModal
+          data={typeBreakdown.map(t => ({ type: t.type, tokens: t.tokens, count: t.count }))}
+          totalTokens={totalTokens}
+          periodLabel={periodLabel}
+          onClose={() => setShowTokensModal(false)}
+        />
+      )}
     </div>
   )
 }

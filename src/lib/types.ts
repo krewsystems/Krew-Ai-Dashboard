@@ -40,6 +40,7 @@ export interface TypeBreakdown {
   type: string
   count: number
   cost: number
+  tokens: number
 }
 
 export interface ModelBreakdown {

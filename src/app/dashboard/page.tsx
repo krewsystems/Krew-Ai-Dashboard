@@ -10,15 +10,17 @@ import DailyCostChart from '@/components/DailyCostChart'
 import MessageTypeDonut from '@/components/MessageTypeDonut'
 import LiveFeed from '@/components/LiveFeed'
 import TimeframeSelector, { getPreset, type TimeframeValue } from '@/components/TimeframeSelector'
+import TokensModal from '@/components/TokensModal'
 
 interface OverviewStats {
   totalCost: number
   totalReplies: number
+  totalTokens: number
   topBrand: { name: string; cost: number } | null
   mostActiveBrand: { name: string; count: number } | null
 }
 
-interface TypeBreakdown { type: string; count: number; cost: number }
+interface TypeBreakdown { type: string; count: number; cost: number; tokens: number }
 
 function isoDay(d: Date) { return d.toISOString().split('T')[0] }
 
@@ -33,6 +35,7 @@ export default function OverviewPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [showTokensModal, setShowTokensModal] = useState(false)
 
   const fetchData = useCallback(async (tf: TimeframeValue) => {
     setLoading(true)
@@ -89,6 +92,7 @@ export default function OverviewPage() {
       // Stats
       const totalCost = allLogs.reduce((s, l) => s + (l.cost_usd ?? 0), 0)
       const totalReplies = allLogs.length
+      const totalTokens = allLogs.reduce((s, l) => s + (l.total_tokens ?? 0), 0)
 
       const brandCosts: Record<string, { name: string; cost: number }> = {}
       const brandCounts: Record<string, { name: string; count: number }> = {}
@@ -103,17 +107,19 @@ export default function OverviewPage() {
       setStats({
         totalCost,
         totalReplies,
+        totalTokens,
         topBrand: Object.values(brandCosts).sort((a, b) => b.cost - a.cost)[0] ?? null,
         mostActiveBrand: Object.values(brandCounts).sort((a, b) => b.count - a.count)[0] ?? null,
       })
 
       // Type breakdown
-      const typeMap: Record<string, { count: number; cost: number }> = {}
+      const typeMap: Record<string, { count: number; cost: number; tokens: number }> = {}
       allLogs.forEach(l => {
         const t = l.message_type ?? 'text'
-        if (!typeMap[t]) typeMap[t] = { count: 0, cost: 0 }
+        if (!typeMap[t]) typeMap[t] = { count: 0, cost: 0, tokens: 0 }
         typeMap[t].count++
         typeMap[t].cost += l.cost_usd ?? 0
+        typeMap[t].tokens += l.total_tokens ?? 0
       })
       setTypeBreakdown(Object.entries(typeMap).map(([type, d]) => ({ type, ...d })))
 
@@ -204,14 +210,15 @@ export default function OverviewPage() {
                 ...prev,
                 totalCost: prev.totalCost + (newLog.cost_usd ?? 0),
                 totalReplies: prev.totalReplies + 1,
+                totalTokens: prev.totalTokens + (newLog.total_tokens ?? 0),
               }
             })
 
             setTypeBreakdown(prev => {
               const t = newLog.message_type ?? 'text'
               const ex = prev.find(x => x.type === t)
-              if (ex) return prev.map(x => x.type === t ? { ...x, count: x.count + 1, cost: x.cost + (newLog.cost_usd ?? 0) } : x)
-              return [...prev, { type: t, count: 1, cost: newLog.cost_usd ?? 0 }]
+              if (ex) return prev.map(x => x.type === t ? { ...x, count: x.count + 1, cost: x.cost + (newLog.cost_usd ?? 0), tokens: x.tokens + (newLog.total_tokens ?? 0) } : x)
+              return [...prev, { type: t, count: 1, cost: newLog.cost_usd ?? 0, tokens: newLog.total_tokens ?? 0 }]
             })
 
             const isSingleDay = timeframe.key === 'today' || timeframe.key === 'yesterday' || timeframe.key === 'custom'
@@ -270,13 +277,14 @@ export default function OverviewPage() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
         {loading ? (
-          Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)
+          Array.from({ length: 5 }).map((_, i) => <SkeletonCard key={i} />)
         ) : (
           <>
             <StatCard label={`total cost — ${periodLabel}`} value={`$${fmtCost(stats?.totalCost ?? 0)}`} />
             <StatCard label={`replies — ${periodLabel}`} value={(stats?.totalReplies ?? 0).toLocaleString()} />
+            <StatCard label={`tokens — ${periodLabel}`} value={(stats?.totalTokens ?? 0).toLocaleString()} onClick={() => setShowTokensModal(true)} />
             <StatCard
               label={`top brand — ${periodLabel}`}
               value={stats?.topBrand?.name ?? '—'}
@@ -303,6 +311,15 @@ export default function OverviewPage() {
 
       {/* Feed */}
       <LiveFeed logs={logs} lastUpdated={lastUpdated} />
+
+      {showTokensModal && (
+        <TokensModal
+          data={typeBreakdown.map(t => ({ type: t.type, tokens: t.tokens, count: t.count }))}
+          totalTokens={stats?.totalTokens ?? 0}
+          periodLabel={periodLabel}
+          onClose={() => setShowTokensModal(false)}
+        />
+      )}
     </div>
   )
 }

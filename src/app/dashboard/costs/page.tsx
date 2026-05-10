@@ -88,7 +88,7 @@ export default function CostsPage() {
       })
       setTypeBreakdown(
         Object.entries(typeMap)
-          .map(([type, d]) => ({ type, count: d.count, cost: d.cost }))
+          .map(([type, d]) => ({ type, count: d.count, cost: d.cost, tokens: 0 }))
           .sort((a, b) => b.cost - a.cost)
       )
     } catch (err: unknown) {
